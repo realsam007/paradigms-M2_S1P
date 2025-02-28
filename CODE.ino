@@ -1,42 +1,61 @@
-#include <Arduino.h>
-const int ledPin = 13; // LED connected to digital pin 13
-const int potPin = A4; // Potentiometer connected to analog pin A4
-volatile bool ledState = LOW; // LED state flag
+// C++ code
+
+#include <avr/io.h>
+#include <avr/interrupt.h>
+
+const byte LED_PIN = 13;
+const byte METER_PIN = A4;
+
+volatile double timerFrequency = 0.5;  // Default to 0.5Hz (2s interval)
+
 void setup() {
-pinMode(ledPin, OUTPUT);
-pinMode(potPin, INPUT);
-// Initialize Timer1 with a default frequency (0.5 Hz: LED toggles every 2 seconds)
-startTimer(0.5);
-// Enable global interrupts
-sei();
+  pinMode(LED_PIN, OUTPUT);
+  pinMode(METER_PIN, INPUT);
+  
+  Serial.begin(9600);
+
+  startTimer(timerFrequency);
 }
+
 void loop() {
-// Read potentiometer value (0 to 1023) and map it to a desired frequency range.
-// For example, map to a range from 0.5 Hz to 2.0 Hz.
-int potValue = analogRead(potPin);
-double timerFrequency = map(potValue, 0, 1023, 50, 200) / 100.0; // yields 0.5 Hz to 2.0 Hz
-// Update the timer frequency based on potentiometer input.
-startTimer(timerFrequency);
-// Small delay to prevent excessive timer reconfiguration
-delay(500);
+  // Read potentiometer and adjust timer frequency dynamically
+  int sensorValue = analogRead(METER_PIN);
+  double newFrequency = map(sensorValue, 0, 1023, 1, 10) / 10.0; // Maps to 0.1Hz - 1Hz (10s - 1s interval)
+
+  if (newFrequency != timerFrequency) {
+    timerFrequency = newFrequency;
+    Serial.print("New Timer Frequency: ");
+    Serial.print(timerFrequency);
+    Serial.println(" Hz");
+    startTimer(timerFrequency);
+  }
+
+  delay(500);  // Adjust every 500ms
 }
-// Timer1 Compare Match A interrupt service routine
-ISR(TIMER1_COMPA_vect) {
-ledState = !ledState; // Toggle LED state
-digitalWrite(ledPin, ledState); // Update LED output
-}
+
 void startTimer(double timerFrequency) {
-// Stop Timer1 by clearing control register
-TCCR1B = 0;
-// Calculate the OCR1A value:
-// Using a prescaler of 256 and F_CPU = 16,000,000 Hz:
-// OCR1A = (F_CPU / (prescaler * timerFrequency)) - 1
-uint32_t ocrValue = (16000000UL / (256 * timerFrequency)) - 1;
-OCR1A = ocrValue;
-// Set Timer1 to CTC mode (Clear Timer on Compare Match) with a prescaler of 256.
-// WGM12 bit sets CTC mode; CS12 bit sets prescaler to 256.
-TCCR1A = 0;
-TCCR1B = (1 << WGM12) | (1 << CS12);
-// Enable Timer1 Compare Match A interrupt.
-TIMSK1 |= (1 << OCIE1A);
+  noInterrupts(); // Disable interrupts during setup
+  
+  TCCR1A = 0;  // Reset Timer1 control registers
+  TCCR1B = 0;
+  TCNT1 = 0;   // Reset Timer counter
+
+  // Calculate OCR1A for desired frequency (prescaler 1024)
+  // Formula: OCR1A = (16,000,000 / (prescaler * frequency)) - 1
+  long ocrValue = (16000000 / (1024 * timerFrequency)) - 1;
+
+  OCR1A = ocrValue;
+  TCCR1B |= (1 << WGM12);  // CTC mode
+  TCCR1B |= (1 << CS12) | (1 << CS10);  // Prescaler 1024
+  TIMSK1 |= (1 << OCIE1A); // Enable Timer Compare Interrupt
+  
+  interrupts(); // Re-enable interrupts
+}
+
+ISR(TIMER1_COMPA_vect) {
+  digitalWrite(LED_PIN, digitalRead(LED_PIN) ^ 1); // Toggle LED
+
+  if (digitalRead(LED_PIN) == HIGH) {
+    Serial.println("LED ON");
+  }
 }
